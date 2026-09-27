@@ -57,18 +57,20 @@ enum LCDColors {
 ///
 /// Everything (shader + blur) happens on a tiny 1/8-size copy that's flattened with `drawingGroup`
 /// and then scaled up: ~64x fewer pixels to shade and blur, and the upscale adds even more softness.
-/// Redraws at most 30 times a second, and not at all while paused.
+/// Redraws at most 30 times a second, and not at all while paused. Reads `MusicAudio` levels each frame.
 struct ArtworkBackground: View, Equatable {
     let artwork: NSImage?
     let playing: Bool
     let theme: LyricTheme
+    /// How strongly to follow the music; 0 = not at all (see `SettingsKey.musicReaction`).
+    let reaction: Double
 
     private static let downscale = 8.0
     /// In small-copy points, so the on-screen blur is this × `downscale`.
     private static let blur = 5.0
 
     static func == (a: Self, b: Self) -> Bool {
-        a.artwork === b.artwork && a.playing == b.playing && a.theme == b.theme
+        a.artwork === b.artwork && a.playing == b.playing && a.theme == b.theme && a.reaction == b.reaction
     }
 
     var body: some View {
@@ -77,12 +79,17 @@ struct ArtworkBackground: View, Equatable {
 
             if let artwork {
                 TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !playing)) { context in
-                    let time = Float(context.date.timeIntervalSinceReferenceDate.truncatingRemainder(dividingBy: 3600))
+                    // Moves with the music: flows faster when it's loud, punches in on bass hits (see `artworkFlow`).
+                    let audio = reaction > 0 ? MusicAudio.shared.levels : AudioLevels()
+                    let time = Float((context.date.timeIntervalSinceReferenceDate + audio.flow * reaction)
+                        .truncatingRemainder(dividingBy: 3600))
                     // Stretched on purpose: the shader samples in 0...1 cover coordinates.
                     Image(nsImage: artwork)
                         .resizable()
                         .frame(width: small.width, height: small.height)
-                        .layerEffect(ShaderLibrary.artworkFlow(.float2(small), .float(time)), maxSampleOffset: small)
+                        .layerEffect(ShaderLibrary.artworkFlow(.float2(small), .float(time), .float(audio.kick * Float(reaction)),
+                                                               .float(audio.energy * Float(reaction))),
+                                     maxSampleOffset: small)
                         .blur(radius: Self.blur, opaque: true) // opaque: don't fade to black at the edges
                         .saturation(theme.saturation)
                         .drawingGroup() // flatten at the small size so the scale-up below is just a texture stretch

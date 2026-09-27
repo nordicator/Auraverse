@@ -5,6 +5,8 @@ import SwiftUI
 /// - LED: the piece is shown at once; words light up fully as they're sung, upcoming ones are dim.
 /// - LCD: the piece types itself out letter by letter as it's sung.
 /// Overlapping lines (ad-libs, duets) and background vocals get their own rows.
+/// Level meters down both sides react to the music (`MusicAudio`); the text is kept clear of them.
+/// Size is fixed (the text size setting doesn't apply), so the layout always fits.
 struct DotDisplay: View, Equatable {
     let chunks: [LyricChunk]
     let lyricsID: Int
@@ -12,23 +14,29 @@ struct DotDisplay: View, Equatable {
     let clock: PlaybackClock
     let style: LyricStyle
     let ledColor: SignColor
-    let scale: Double
+    /// How strongly the side meters follow the music; 0 hides them (see `SettingsKey.musicReaction`).
+    let reaction: Double
 
     static func == (a: Self, b: Self) -> Bool {
         a.lyricsID == b.lyricsID && a.length == b.length && a.clock == b.clock && a.style == b.style
-            && a.ledColor == b.ledColor && a.scale == b.scale
+            && a.ledColor == b.ledColor && a.reaction == b.reaction
     }
 
     var body: some View {
         GeometryReader { geo in
             // Half-point steps keep the grid crisp on Retina.
-            let cell = ((min(max(geo.size.width / 100, 5), 16) * scale) * 2).rounded() / 2
-            let gridCols = Int((geo.size.width / cell).rounded(.up))
+            let cell = (min(max(geo.size.width / 100, 5), 16) * 2).rounded() / 2
+            let gridCols = Int(geo.size.width / cell) // whole columns only, so both meters are fully visible
             let gridRows = Int((geo.size.height / cell).rounded(.up))
+            // Meters stop short of the title and the settings button at the top.
+            let meterHeight = Float(max(Int((geo.size.height / 2 - 44) / cell), 1))
 
             TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !clock.playing)) { context in
+                let bands = clock.playing && reaction > 0
+                    ? pointwiseMin(MusicAudio.shared.levels.bands * Float(reaction), .one) : .zero
                 DotBoard(words: words(at: clock.time(at: context.date)),
-                         maxCols: gridCols - 8, gridCols: gridCols, gridRows: gridRows,
+                         bars: (bands * meterHeight).rounded(.toNearestOrAwayFromZero),
+                         gridCols: gridCols, gridRows: gridRows,
                          cell: cell, size: geo.size, style: style, ledColor: ledColor)
                     .equatable() // only redraws when what's lit actually changes
             }
@@ -82,10 +90,15 @@ struct DotDisplay: View, Equatable {
 
 }
 
-/// Lays the words out in dots, centers them on the grid, and hands them to the LED or LCD shader.
+/// Lays the words out in dots, centers them on the grid, and hands them to the LED or LCD shader
+/// along with the side meters (`meterValue` in Shaders.metal).
 struct DotBoard: View, Equatable {
+    /// Columns each side reserves for its meter: an empty edge column, 4 bars with gaps, then 2 empty columns.
+    static let meterCols = 10
+
     let words: [DotWord]
-    let maxCols: Int
+    /// Half-height in dots of each meter bar: bass, low mids, high mids, treble.
+    let bars: SIMD4<Float>
     let gridCols: Int
     let gridRows: Int
     let cell: Double
@@ -94,22 +107,25 @@ struct DotBoard: View, Equatable {
     let ledColor: SignColor
 
     static func == (a: Self, b: Self) -> Bool {
-        a.words == b.words && a.maxCols == b.maxCols && a.gridCols == b.gridCols
+        a.words == b.words && a.bars == b.bars && a.gridCols == b.gridCols
             && a.gridRows == b.gridRows && a.cell == b.cell && a.style == b.style && a.ledColor == b.ledColor
     }
 
     var body: some View {
+        // The bitmap is never wider than maxCols, so centered it can't reach the meters.
         let bitmap = DotBitmap(words: words, wordGap: style == .lcd ? DotBitmap.charAdvance : 4,
-                               maxCols: maxCols)
+                               maxCols: gridCols - 2 * Self.meterCols)
         let origin = CGPoint(x: (gridCols - bitmap.cols) / 2, y: (gridRows - bitmap.rows) / 2)
         let dots = Shader.Argument.floatArray(bitmap.packed)
+        let meters: [Shader.Argument] = [.float(Float(gridCols)), .float(Float(Int(size.height / cell / 2))),
+                                         .float4(bars.x, bars.y, bars.z, bars.w)]
 
         return Rectangle().colorEffect(style == .lcd
             ? ShaderLibrary.lcdBoard(.float2(size), .float(cell), .color(LCDColors.ink), .color(LCDColors.backlight),
                                      dots, .float2(origin), .float(Float(bitmap.cols)), .float(Float(bitmap.rows)),
-                                     .float(Float(bitmap.packedStride)))
+                                     .float(Float(bitmap.packedStride)), meters[0], meters[1], meters[2])
             : ShaderLibrary.ledBoard(.float(cell), .color(ledColor.color),
                                      dots, .float2(origin), .float(Float(bitmap.cols)), .float(Float(bitmap.rows)),
-                                     .float(Float(bitmap.packedStride))))
+                                     .float(Float(bitmap.packedStride)), meters[0], meters[1], meters[2]))
     }
 }

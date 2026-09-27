@@ -10,6 +10,15 @@ enum SettingsKey {
     static let length = "length"
     static let emojis = "emojis"
     static let signColor = "signColor"
+    static let reactToMusic = "reactToMusic"
+    static let musicIntensity = "musicIntensity"
+
+    /// How strongly visuals follow the music (`MusicAudio`): 0 when turned off, otherwise the intensity setting.
+    static var musicReaction: Double {
+        let defaults = UserDefaults.standard
+        guard defaults.object(forKey: reactToMusic) as? Bool ?? true else { return 0 }
+        return defaults.object(forKey: musicIntensity) as? Double ?? 1
+    }
 }
 
 /// LED color for the LED Sign style.
@@ -181,6 +190,8 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.length) private var length = LyricLength.short
     @AppStorage(SettingsKey.emojis) private var emojis = true
     @AppStorage(SettingsKey.signColor) private var signColor = SignColor.amber
+    @AppStorage(SettingsKey.reactToMusic) private var reactToMusic = true
+    @AppStorage(SettingsKey.musicIntensity) private var musicIntensity = 1.0
 
     var body: some View {
         Form {
@@ -198,7 +209,23 @@ struct SettingsView: View {
                 Toggle("Emojis", isOn: $emojis)
                     .disabled(style.isSign)
             }
-            Section("Text") {
+            Section {
+                Toggle("React to music", isOn: $reactToMusic)
+                Slider(value: $musicIntensity, in: 0.2...2) {
+                    Text("Intensity")
+                } minimumValueLabel: {
+                    Image(systemName: "speaker.wave.1")
+                } maximumValueLabel: {
+                    Image(systemName: "speaker.wave.3")
+                }
+                .disabled(!reactToMusic)
+            } header: {
+                Text("Music")
+            } footer: {
+                Text("The background pulses with the bass and the LED/LCD side meters follow the song.")
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Section {
                 Picker("Font", selection: $font) {
                     ForEach(LyricFont.allCases) { f in
                         Text(f.name).font(f.font(size: 13, weight: .regular)).tag(f)
@@ -214,6 +241,16 @@ struct SettingsView: View {
                 } maximumValueLabel: {
                     Text("A").font(.title3)
                 }
+            } header: {
+                Text("Text")
+            } footer: {
+                if style.isSign {
+                    Text("\(style.name) always uses its own dot font at a fixed size.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            .disabled(style.isSign) // the dot displays use a fixed font and size so the text never runs into the meters
+            Section {
                 Picker("Lyric length", selection: $length) {
                     ForEach(LyricLength.allCases) { Text($0.name).tag($0) }
                 }

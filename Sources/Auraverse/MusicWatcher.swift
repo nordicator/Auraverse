@@ -78,6 +78,7 @@ final class MusicWatcher: ObservableObject {
                 setLyrics([], source: nil)
             }
             if clock.playing { clock.playing = false }
+            MusicAudio.shared.update(playing: false)
             status = result == .failed ? "Can't reach Apple Music (check Automation permission)" : "Nothing playing in Apple Music"
             return
         }
@@ -87,6 +88,8 @@ final class MusicWatcher: ObservableObject {
         if playing != clock.playing || abs(clock.time(at: date) - position) > 0.3 || newTrack != track {
             clock = PlaybackClock(position: position, date: date, playing: playing)
         }
+
+        MusicAudio.shared.update(playing: playing && SettingsKey.musicReaction > 0) // off = don't listen at all
 
         if newTrack != track {
             track = newTrack

@@ -16,13 +16,16 @@ struct ContentView: View {
     @AppStorage(SettingsKey.length) private var length = LyricLength.short
     @AppStorage(SettingsKey.emojis) private var emojis = true
     @AppStorage(SettingsKey.signColor) private var signColor = SignColor.amber
+    @AppStorage(SettingsKey.reactToMusic) private var reactToMusic = true
+    @AppStorage(SettingsKey.musicIntensity) private var musicIntensity = 1.0
 
     var body: some View {
         ZStack(alignment: .top) {
             effectClock { time in
                 ZStack {
                     if !style.isSign || watcher.lines.isEmpty { // the LED board and LCD screen are opaque
-                        ArtworkBackground(artwork: watcher.artwork, playing: watcher.clock.playing, theme: theme)
+                        ArtworkBackground(artwork: watcher.artwork, playing: watcher.clock.playing, theme: theme,
+                                          reaction: reaction)
                             .equatable()
                     }
 
@@ -33,7 +36,7 @@ struct ContentView: View {
                     } else if style.isSign {
                         DotDisplay(chunks: watcher.chunks(maxWords: length.maxWords), lyricsID: watcher.lyricsID,
                                    length: length, clock: watcher.clock, style: style, ledColor: signColor,
-                                   scale: textSize)
+                                   reaction: reaction)
                             .equatable()
                     } else {
                         LyricsLayer(chunks: watcher.chunks(maxWords: length.maxWords), lyricsID: watcher.lyricsID,
@@ -60,6 +63,9 @@ struct ContentView: View {
         default: theme.text
         }
     }
+
+    /// 0 = don't react to the music, otherwise how strongly (the intensity setting).
+    private var reaction: Double { reactToMusic ? musicIntensity : 0 }
 
     private var look: LyricLook {
         LyricLook(font: font, weight: weight.weight, scale: textSize, theme: theme)

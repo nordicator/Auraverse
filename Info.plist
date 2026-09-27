@@ -8,6 +8,8 @@
     <string>com.ayaansajjad.Auraverse</string>
     <key>CFBundleExecutable</key>
     <string>Auraverse</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -16,6 +18,8 @@
     <string>1</string>
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Auraverse listens to Apple Music's audio so the background and the LED/LCD meters move with the beat.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Auraverse reads the current song and playback position from Apple Music to show synced lyrics.</string>
 </dict>

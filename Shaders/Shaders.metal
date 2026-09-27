@@ -79,11 +79,13 @@ static float2 rotate(float2 p, float angle) {
 }
 
 /// Samples the cover at `p` (centered coordinates) after a swirl and a flowing wave warp.
-static half4 warpedCover(SwiftUI::Layer layer, float2 size, float2 p, float time, float spin) {
+/// `energy` (0...1, how loud the song is) makes the waves deeper.
+static half4 warpedCover(SwiftUI::Layer layer, float2 size, float2 p, float time, float spin, float energy) {
     float r = length(p);
     p = rotate(p, spin * time * 0.05 + 1.2 * spin * sin(time * 0.15) * max(0.0, 1.0 - r)); // swirl, strongest in the middle
-    p += 0.10 * sin(p.yx * 3.0 + time * float2(0.31, 0.23));
-    p += 0.05 * sin(p.yx * 7.0 - time * float2(0.17, 0.29) * spin);
+    float depth = 1.0 + energy;
+    p += 0.10 * depth * sin(p.yx * 3.0 + time * float2(0.31, 0.23));
+    p += 0.05 * depth * sin(p.yx * 7.0 - time * float2(0.17, 0.29) * spin);
     float2 uv = mirrorRepeat(0.5 + p * 0.75); // zoomed in a bit so it reads as the cover, not a thumbnail
     return layer.sample(clamp(uv * size, float2(0.5), size - 0.5));
 }
@@ -91,11 +93,18 @@ static half4 warpedCover(SwiftUI::Layer layer, float2 size, float2 p, float time
 /// The album cover swirled and warped, two copies turning in opposite directions blended together.
 /// Meant to be blurred afterwards. Applied to the cover image stretched over the view, so
 /// `layer.sample(uv * size)` reads the cover at normalized coordinate `uv` whatever the aspect ratio.
-[[ stitchable ]] half4 artworkFlow(float2 position, SwiftUI::Layer layer, float2 size, float time) {
+///
+/// Reacts to the music (see `AudioLevels`): `time` already runs faster when the song is loud,
+/// `energy` deepens the waves, and each bass hit (`kick`, 0...1) punches the cover ~11% closer and brighter.
+[[ stitchable ]] half4 artworkFlow(float2 position, SwiftUI::Layer layer, float2 size, float time,
+                                   float kick, float energy) {
     float2 p = (position / size - 0.5) * float2(size.x / size.y, 1.0); // centered, square units
-    half4 a = warpedCover(layer, size, p, time, 1.0);
-    half4 b = warpedCover(layer, size, rotate(p, 2.1) * 1.3, time + 40.0, -1.0);
-    return mix(a, b, 0.45h);
+    p *= 1.0 - 0.1 * kick;
+    half4 a = warpedCover(layer, size, p, time, 1.0, energy);
+    half4 b = warpedCover(layer, size, rotate(p, 2.1) * 1.3, time + 40.0, -1.0, energy);
+    half4 c = mix(a, b, 0.45h);
+    c.rgb *= half(1.0 + 0.3 * kick);
+    return c;
 }
 
 // MARK: - Dot displays
@@ -116,12 +125,24 @@ static float dotValue(float2 c, device const float *dots, int count, float2 orig
     return (column & 0x80u) != 0u ? 0.3 : 1.0;
 }
 
+/// Level meters down both sides of a dot display (see `DotBoard`): per side, 4 one-dot-wide bars on
+/// columns 1, 3, 5, 7 from the edge, bass on the outside, treble on the inside, mirrored on the right.
+/// Each grows up and down from row `middle`; `bars` holds each bar's half-height in whole dots (0 = off).
+/// `gridCols` is the number of whole columns, so the right side mirrors the left exactly.
+static float meterValue(float2 c, float gridCols, float middle, float4 bars) {
+    float x = c.x < gridCols * 0.5 ? c.x : gridCols - 1.0 - c.x;
+    float k = x - 1.0;
+    if (k < 0.0 || k > 6.0 || fmod(k, 2.0) != 0.0) return 0.0;
+    return abs(c.y - middle) < bars[int(k * 0.5)] ? 1.0 : 0.0;
+}
+
 /// LED sign (bus stop / train platform) filling the whole view: round LEDs on a `cell` grid.
 /// Unlit LEDs stay faintly visible, like a real sign; lit ones have a hot core and a little glow.
 [[ stitchable ]] half4 ledBoard(float2 position, half4 current, float cell, half4 color,
-                                device const float *dots, int count, float2 origin, float cols, float rows, float stride) {
+                                device const float *dots, int count, float2 origin, float cols, float rows, float stride,
+                                float gridCols, float middle, float4 bars) {
     float2 c = floor(position / cell);
-    float on = dotValue(c, dots, count, origin, cols, rows, stride);
+    float on = max(dotValue(c, dots, count, origin, cols, rows, stride), meterValue(c, gridCols, middle, bars));
     float d = length(position - (c + 0.5) * cell) / (cell * 0.5); // 0 at the LED's center, 1 at the cell edge
 
     half led = half(1.0 - smoothstep(0.55, 0.75, d));
@@ -134,10 +155,12 @@ static float dotValue(float2 c, device const float *dots, int count, float2 orig
 /// Character LCD filling the whole view: square pixels with thin gaps on a green backlight,
 /// a very faint grid of unlit pixels, and the slight shadow real LCD pixels cast on the glass.
 [[ stitchable ]] half4 lcdBoard(float2 position, half4 current, float2 size, float cell, half4 ink, half4 backlight,
-                                device const float *dots, int count, float2 origin, float cols, float rows, float stride) {
+                                device const float *dots, int count, float2 origin, float cols, float rows, float stride,
+                                float gridCols, float middle, float4 bars) {
     float2 c = floor(position / cell);
-    half on = half(dotValue(c, dots, count, origin, cols, rows, stride));
-    half shadow = half(dotValue(floor((position - cell * 0.3) / cell), dots, count, origin, cols, rows, stride));
+    float2 s = floor((position - cell * 0.3) / cell);
+    half on = half(max(dotValue(c, dots, count, origin, cols, rows, stride), meterValue(c, gridCols, middle, bars)));
+    half shadow = half(max(dotValue(s, dots, count, origin, cols, rows, stride), meterValue(s, gridCols, middle, bars)));
 
     float2 f = fract(position / cell);
     half pixel = half(step(0.07, f.x) * step(f.x, 0.93) * step(0.07, f.y) * step(f.y, 0.93));
