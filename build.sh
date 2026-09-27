@@ -1,12 +1,12 @@
 #!/bin/sh
-# Builds LyricAura.app. Does not launch it.
+# Builds Auraverse.app. Does not launch it.
 set -e
 cd "$(dirname "$0")"
 swift build -c release
-APP=LyricAura.app
+APP=Auraverse.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp .build/release/LyricAura "$APP/Contents/MacOS/"
+cp .build/release/Auraverse "$APP/Contents/MacOS/"
 cp Info.plist "$APP/Contents/"
 # Metal shaders -> default.metallib (what SwiftUI's ShaderLibrary.default loads).
 # Needs the Metal toolchain: xcodebuild -downloadComponent MetalToolchain

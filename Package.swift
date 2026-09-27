@@ -2,9 +2,9 @@
 import PackageDescription
 
 let package = Package(
-    name: "LyricAura",
+    name: "Auraverse",
     platforms: [.macOS(.v15)],
     targets: [
-        .executableTarget(name: "LyricAura", path: "Sources/LyricAura", swiftSettings: [.swiftLanguageMode(.v5)])
+        .executableTarget(name: "Auraverse", path: "Sources/Auraverse", swiftSettings: [.swiftLanguageMode(.v5)])
     ]
 )

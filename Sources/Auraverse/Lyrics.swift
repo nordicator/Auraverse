@@ -13,7 +13,19 @@ struct LyricWord: Identifiable {
 struct LyricChunk: Identifiable {
     let id: Int
     let start: Double
+    /// When its last word (main or backing) finishes.
+    let end: Double
+    /// Index of the source line it came from. Pieces of one line never overlap each other,
+    /// but a piece can still be sung while a later line starts (ad-libs, duets).
+    let line: Int
     let words: [LyricWord]
+    /// Background vocals / ad-libs sung over this piece, shown as a smaller second line.
+    let backing: [LyricWord]
+
+    /// Still being sung at `time` even though a later piece from another line has started.
+    func overlaps(_ later: LyricChunk, at time: Double) -> Bool {
+        line != later.line && end > time
+    }
 }
 
 /// Fetches synced lyrics from lrclib.net (free, no API key).
@@ -49,7 +61,7 @@ enum LyricsFetcher {
 
     private static func load<T: Decodable>(_ url: URL) async -> T? {
         var request = URLRequest(url: url)
-        request.setValue("LyricAura 0.1", forHTTPHeaderField: "User-Agent")
+        request.setValue("Auraverse 0.1", forHTTPHeaderField: "User-Agent")
         guard let (data, response) = try? await URLSession.shared.data(for: request),
               (response as? HTTPURLResponse)?.statusCode == 200 else { return nil }
         return try? JSONDecoder().decode(T.self, from: data)
@@ -74,7 +86,7 @@ enum LyricsFetcher {
 
         return lines.enumerated().map { i, line in
             let end = i + 1 < lines.count ? lines[i + 1].time : line.time + 5
-            return (line.time, timedWords(line.text, start: line.time, end: end))
+            return TimedLine(start: line.time, words: timedWords(line.text, start: line.time, end: end))
         }
     }
 
@@ -101,32 +113,53 @@ enum LyricsFetcher {
 }
 
 typealias TimedWord = (text: String, start: Double, end: Double)
+
 /// A lyric line as the source gave it. Kept whole so it can be re-split when the "lyric length" setting changes.
-typealias TimedLine = (start: Double, words: [TimedWord])
+struct TimedLine {
+    var start: Double
+    var words: [TimedWord]
+    /// Background vocals sung over this line (Apple's `ttm:role="x-bg"`); empty for LRC.
+    var background: [TimedWord] = []
+}
 
 /// Turns timed lines into on-screen chunks. Shared by every lyrics source.
 enum LyricChunker {
     /// A line with no words becomes an empty chunk (shown as ♪). Lines longer than `maxWords` are cut into
-    /// evenly sized pieces (e.g. 7 words with max 5 → 4 + 3, not 5 + 2).
+    /// evenly sized pieces (e.g. 7 words with max 5 → 4 + 3, not 5 + 2). A line's background vocals go
+    /// with whichever piece is being sung when they start.
     static func chunks(from lines: [TimedLine], maxWords: Int) -> [LyricChunk] {
         var chunks: [LyricChunk] = []
         var nextID = 0
-        for line in lines {
-            let words = line.words
+        func makeWords(_ words: some Sequence<TimedWord>) -> [LyricWord] {
+            words.map { w in
+                defer { nextID += 1 }
+                return LyricWord(id: nextID, text: w.text, start: w.start, end: w.end, emoji: Emoji.for(w.text))
+            }
+        }
+
+        for (lineIndex, line) in lines.enumerated() {
+            // Only background vocals (rare): show them as the main words.
+            let words = line.words.isEmpty ? line.background : line.words
+            let background = line.words.isEmpty ? [] : line.background
             if words.isEmpty {
-                chunks.append(LyricChunk(id: nextID, start: line.start, words: []))
+                chunks.append(LyricChunk(id: nextID, start: line.start, end: line.start, line: lineIndex, words: [], backing: []))
                 nextID += 1
                 continue
             }
             let pieces = words.count <= maxWords ? 1 : (words.count + maxWords - 1) / maxWords
             let size = (words.count + pieces - 1) / pieces
-            for (p, from) in stride(from: 0, to: words.count, by: size).enumerated() {
+            let starts = Array(stride(from: 0, to: words.count, by: size))
+            for (p, from) in starts.enumerated() {
                 let slice = words[from..<min(from + size, words.count)]
-                let chunkWords = slice.map { w in
-                    defer { nextID += 1 }
-                    return LyricWord(id: nextID, text: w.text, start: w.start, end: w.end, emoji: Emoji.for(w.text))
-                }
-                chunks.append(LyricChunk(id: nextID, start: p == 0 ? line.start : slice.first!.start, words: chunkWords))
+                let isLast = p == starts.count - 1
+                let nextPieceStart = isLast ? Double.infinity : words[starts[p + 1]].start
+                let pieceStart = p == 0 ? -Double.infinity : slice.first!.start
+                let backing = background.filter { $0.start >= pieceStart && $0.start < nextPieceStart }
+                let chunkWords = makeWords(slice)
+                let backingWords = makeWords(backing)
+                let end = (chunkWords + backingWords).map(\.end).max() ?? line.start
+                chunks.append(LyricChunk(id: nextID, start: p == 0 ? line.start : slice.first!.start, end: end,
+                                         line: lineIndex, words: chunkWords, backing: backingWords))
                 nextID += 1
             }
         }
@@ -135,7 +168,8 @@ enum LyricChunker {
         var latest = -Double.infinity
         return chunks.map { chunk in
             latest = max(latest, chunk.start)
-            return LyricChunk(id: chunk.id, start: latest, words: chunk.words)
+            return LyricChunk(id: chunk.id, start: latest, end: max(chunk.end, latest), line: chunk.line,
+                              words: chunk.words, backing: chunk.backing)
         }
     }
 
@@ -154,3 +188,4 @@ enum LyricChunker {
         }
     }
 }
+

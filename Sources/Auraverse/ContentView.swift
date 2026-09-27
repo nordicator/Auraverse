@@ -15,22 +15,30 @@ struct ContentView: View {
     @AppStorage(SettingsKey.textSize) private var textSize = 1.0
     @AppStorage(SettingsKey.length) private var length = LyricLength.short
     @AppStorage(SettingsKey.emojis) private var emojis = true
+    @AppStorage(SettingsKey.signColor) private var signColor = SignColor.amber
 
     var body: some View {
         ZStack(alignment: .top) {
             effectClock { time in
                 ZStack {
-                    ArtworkBackground(artwork: watcher.artwork, playing: watcher.clock.playing, theme: theme)
-                        .equatable()
+                    if !style.isSign || watcher.lines.isEmpty { // the LED board and LCD screen are opaque
+                        ArtworkBackground(artwork: watcher.artwork, playing: watcher.clock.playing, theme: theme)
+                            .equatable()
+                    }
 
                     if watcher.lines.isEmpty {
                         Text(watcher.status)
                             .font(.title2.bold())
                             .foregroundStyle(theme.text.opacity(0.7))
+                    } else if style.isSign {
+                        DotDisplay(chunks: watcher.chunks(maxWords: length.maxWords), lyricsID: watcher.lyricsID,
+                                   length: length, clock: watcher.clock, style: style, ledColor: signColor,
+                                   scale: textSize)
+                            .equatable()
                     } else {
                         LyricsLayer(chunks: watcher.chunks(maxWords: length.maxWords), lyricsID: watcher.lyricsID,
                                     length: length, clock: watcher.clock, emojis: emojis,
-                                    look: LyricLook(font: font, weight: weight.weight, scale: textSize, theme: theme),
+                                    look: look,
                                     narrow: style == .fisheye) // the lens magnifies ~2x; keep text off the edges
                             .equatable()
                             .lyricEffect(style, time: time)
@@ -42,6 +50,19 @@ struct ContentView: View {
 
             header
         }
+    }
+
+    /// The LED board is black and the LCD is light green whatever the theme, so pick text that reads on it.
+    private var headerColor: Color {
+        switch style {
+        case .led: .white
+        case .lcd: LCDColors.ink
+        default: theme.text
+        }
+    }
+
+    private var look: LyricLook {
+        LyricLook(font: font, weight: weight.weight, scale: textSize, theme: theme)
     }
 
     /// Only VHS and Liquid animate over time; the other styles get no clock at all.
@@ -66,31 +87,18 @@ struct ContentView: View {
                         Text("Lyrics: \(source.rawValue)").font(.caption2).opacity(0.45)
                     }
                 }
-                .foregroundStyle(theme.text)
+                .foregroundStyle(headerColor)
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 80)
             }
 
-            Menu {
-                Picker("Style", selection: $style) {
-                    ForEach(LyricStyle.allCases) { Text($0.name).tag($0) }
-                }
-                Picker("Theme", selection: $theme) {
-                    ForEach(LyricTheme.allCases) { Text($0.name).tag($0) }
-                }
-                Picker("Lyric length", selection: $length) {
-                    ForEach(LyricLength.allCases) { Text($0.name).tag($0) }
-                }
-                Toggle("Emojis", isOn: $emojis)
-                Divider()
-                SettingsLink { Text("More Settings…") }
-            } label: {
+            // Opens the full Settings window (same as ⌘,).
+            SettingsLink {
                 Image(systemName: "paintpalette.fill")
-                    .foregroundStyle(theme.text.opacity(0.8))
+                    .foregroundStyle(headerColor.opacity(0.8))
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .fixedSize()
+            .buttonStyle(.plain)
+            .help("Customize")
             .frame(maxWidth: .infinity, alignment: .trailing)
             .padding(.trailing, 16)
         }
@@ -118,15 +126,17 @@ struct LyricsLayer: View, Equatable {
         TimelineView(.explicit(lineStartDates)) { context in
             // Scheduled dates land exactly on a line's start; don't lose it to floating-point rounding.
             let now = clock.time(at: context.date) + 0.001
-            LyricsStage(chunks: chunks, current: chunks.lastIndex { $0.start <= now } ?? -1,
+            LyricsStage(chunks: chunks, current: chunks.lastIndex { $0.start <= now } ?? -1, now: now,
                         clock: clock, emojis: emojis, look: look, narrow: narrow)
         }
     }
 
+    /// Line starts, plus line ends (an overlapped line stays lit until it's actually finished).
     private var lineStartDates: [Date] {
         guard clock.playing else { return [] }
         let now = clock.time(at: Date())
-        return chunks.filter { $0.start > now }.map { clock.date.addingTimeInterval($0.start - clock.position) }
+        return chunks.flatMap { [$0.start, $0.end] }.filter { $0 > now }.sorted()
+            .map { clock.date.addingTimeInterval($0 - clock.position) }
     }
 }
 
@@ -140,6 +150,8 @@ struct LyricsStage: View {
     let chunks: [LyricChunk]
     /// Index of the current line, -1 before the first.
     let current: Int
+    /// Playback time when this was rendered.
+    let now: Double
     let clock: PlaybackClock
     let emojis: Bool
     let look: LyricLook
@@ -163,9 +175,10 @@ struct LyricsStage: View {
                 FocusStack(focus: current - first, spacing: spacing) {
                     // Keyed by the line's own id (not its position) so the column glides instead of swapping text.
                     ForEach(Array(zip(first...last, chunks[first...last])), id: \.1.id) { i, chunk in
+                        let live = i == current || (i < current && chunk.overlaps(chunks[current], at: now))
                         LineView(chunk: chunk, clock: clock, fontSize: fontSize, look: look,
-                                 state: i == current ? .live : i < current ? .sung : .upcoming)
-                            .opacity(i == current ? 1 : i > current ? 0.45 : 0.25)
+                                 state: live ? .live : i < current ? .sung : .upcoming)
+                            .opacity(live ? 1 : i > current ? 0.45 : 0.25)
                     }
                 }
                 .padding(.horizontal, narrow ? geo.size.width * 0.22 : 40)
@@ -254,9 +267,20 @@ struct ChunkView: View {
                 .font(look.font(size: fontSize))
                 .foregroundStyle(look.theme.unsung)
         } else {
-            FlowLayout(spacing: fontSize * 0.28, lineSpacing: fontSize * 0.08) {
-                ForEach(chunk.words) { word in
-                    WordView(word: word, time: time, fontSize: fontSize, look: look)
+            VStack(spacing: fontSize * 0.15) {
+                FlowLayout(spacing: fontSize * 0.28, lineSpacing: fontSize * 0.08) {
+                    ForEach(chunk.words) { word in
+                        WordView(word: word, time: time, fontSize: fontSize, look: look)
+                    }
+                }
+                // Background vocals / ad-libs: a smaller line underneath with its own timing.
+                if !chunk.backing.isEmpty {
+                    FlowLayout(spacing: fontSize * 0.2, lineSpacing: fontSize * 0.05) {
+                        ForEach(chunk.backing) { word in
+                            WordView(word: word, time: time, fontSize: fontSize * 0.55, look: look)
+                        }
+                    }
+                    .opacity(0.85)
                 }
             }
         }

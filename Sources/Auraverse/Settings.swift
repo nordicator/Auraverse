@@ -9,6 +9,25 @@ enum SettingsKey {
     static let textSize = "textSize"
     static let length = "length"
     static let emojis = "emojis"
+    static let signColor = "signColor"
+}
+
+/// LED color for the LED Sign style.
+enum SignColor: String, CaseIterable, Identifiable {
+    case amber, red, green, blue, white
+
+    var id: Self { self }
+    var name: String { rawValue.capitalized }
+
+    var color: Color {
+        switch self {
+        case .amber: Color(red: 1, green: 0.62, blue: 0.1)
+        case .red: Color(red: 1, green: 0.18, blue: 0.1)
+        case .green: Color(red: 0.25, green: 1, blue: 0.3)
+        case .blue: Color(red: 0.25, green: 0.6, blue: 1)
+        case .white: Color(red: 1, green: 0.97, blue: 0.9)
+        }
+    }
 }
 
 /// Colors for the lyrics and how the background is toned.
@@ -161,6 +180,7 @@ struct SettingsView: View {
     @AppStorage(SettingsKey.textSize) private var textSize = 1.0
     @AppStorage(SettingsKey.length) private var length = LyricLength.short
     @AppStorage(SettingsKey.emojis) private var emojis = true
+    @AppStorage(SettingsKey.signColor) private var signColor = SignColor.amber
 
     var body: some View {
         Form {
@@ -171,7 +191,12 @@ struct SettingsView: View {
                 Picker("Theme", selection: $theme) {
                     ForEach(LyricTheme.allCases) { Text($0.name).tag($0) }
                 }
+                Picker("LED color", selection: $signColor) {
+                    ForEach(SignColor.allCases) { Text($0.name).tag($0) }
+                }
+                .disabled(style != .led)
                 Toggle("Emojis", isOn: $emojis)
+                    .disabled(style.isSign)
             }
             Section("Text") {
                 Picker("Font", selection: $font) {

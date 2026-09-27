@@ -169,7 +169,7 @@ private final class MusicBridge: @unchecked Sendable {
         case failed
     }
 
-    private let queue = DispatchQueue(label: "LyricAura.MusicBridge")
+    private let queue = DispatchQueue(label: "Auraverse.MusicBridge")
     // Only touched on `queue`.
     private lazy var pollScript = NSAppleScript(source: """
         if application "Music" is running then

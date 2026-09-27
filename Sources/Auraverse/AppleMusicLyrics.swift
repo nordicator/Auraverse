@@ -113,19 +113,22 @@ enum AppleMusicLyrics {
 ///     <p begin="0.000" end="1.539"><span begin="0.000" end="0.451">I</span> <span …>lo—</span></p>
 ///
 /// Each `<p>` is a line. Timed `<span>`s are words or syllables: spans touching with no whitespace
-/// between them are syllables of one word. `<span ttm:role="x-bg">` wraps background vocals.
+/// between them are syllables of one word. `<span ttm:role="x-bg">` wraps background vocals, which are
+/// kept separately (`TimedLine.background`) so they can be shown as their own line.
 /// Line-timed lyrics have no spans; their words get estimated timings.
 final class TTMLParser: NSObject, XMLParserDelegate {
-    private var lines: [(start: Double, end: Double, words: [TimedWord])] = []
+    private var lines: [(start: Double, end: Double, words: [TimedWord], background: [TimedWord])] = []
 
     private var inLine = false
     private var lineStart = 0.0, lineEnd = 0.0
     private var lineText = ""
     private var lineWords: [TimedWord] = []
+    private var lineBackground: [TimedWord] = []
     private var pendingWord: TimedWord?
+    private var pendingIsBackground = false
 
-    /// Open spans, innermost last. `timed` = has begin/end, `container` = has child spans.
-    private var spans: [(start: Double?, end: Double?, text: String, container: Bool)] = []
+    /// Open spans, innermost last. `container` = has child spans, `background` = inside an x-bg span.
+    private var spans: [(start: Double?, end: Double?, text: String, container: Bool, background: Bool)] = []
 
     static func parse(_ ttml: String) -> [TimedLine] {
         let delegate = TTMLParser()
@@ -138,10 +141,10 @@ final class TTMLParser: NSObject, XMLParserDelegate {
     private func timedLines() -> [TimedLine] {
         var timed: [TimedLine] = []
         for (i, line) in lines.enumerated() {
-            timed.append((line.start, line.words))
+            timed.append(TimedLine(start: line.start, words: line.words, background: line.background))
             // Long gap before the next line (or after the last): show ♪ instead of a stale line.
             let next = i + 1 < lines.count ? lines[i + 1].start : .infinity
-            if next - line.end > 4 { timed.append((line.end + 0.5, [])) }
+            if next - line.end > 4 { timed.append(TimedLine(start: line.end + 0.5, words: [])) }
         }
         return timed
     }
@@ -155,10 +158,12 @@ final class TTMLParser: NSObject, XMLParserDelegate {
             lineEnd = Self.seconds(attributes["end"]) ?? lineStart
             lineText = ""
             lineWords = []
+            lineBackground = []
             pendingWord = nil
         case "span" where inLine:
             if !spans.isEmpty { spans[spans.count - 1].container = true }
-            spans.append((Self.seconds(attributes["begin"]), Self.seconds(attributes["end"]), "", false))
+            let background = attributes["ttm:role"] == "x-bg" || spans.last?.background == true
+            spans.append((Self.seconds(attributes["begin"]), Self.seconds(attributes["end"]), "", false, background))
         default:
             break
         }
@@ -182,14 +187,14 @@ final class TTMLParser: NSObject, XMLParserDelegate {
             if span.container {
                 flushWord() // background vocal group ended
             } else if let start = span.start {
-                addTimedText(span.text, start: start, end: span.end ?? start)
+                addTimedText(span.text, start: start, end: span.end ?? start, background: span.background)
             }
         case "p":
             flushWord()
             let words = lineWords.isEmpty
                 ? LyricChunker.estimateWords(lineText, start: lineStart, end: lineEnd)
                 : lineWords
-            lines.append((lineStart, lineEnd, words))
+            lines.append((lineStart, lineEnd, words, lineBackground))
             inLine = false
         default:
             break
@@ -198,10 +203,12 @@ final class TTMLParser: NSObject, XMLParserDelegate {
 
     /// A timed span is usually one word or syllable, but can hold several words ("What you");
     /// those share the span's time, split by length.
-    private func addTimedText(_ text: String, start: Double, end: Double) {
+    private func addTimedText(_ text: String, start: Double, end: Double, background: Bool) {
         let parts = text.split(whereSeparator: \.isWhitespace)
         guard !parts.isEmpty else { return }
-        if text.first?.isWhitespace == true { flushWord() }
+        // Switching between main and background vocals always ends the current word.
+        if text.first?.isWhitespace == true || (pendingWord != nil && pendingIsBackground != background) { flushWord() }
+        pendingIsBackground = background
 
         let total = Double(parts.reduce(0) { $0 + $1.count })
         var t = start
@@ -221,7 +228,9 @@ final class TTMLParser: NSObject, XMLParserDelegate {
     }
 
     private func flushWord() {
-        if let word = pendingWord, !word.text.isEmpty { lineWords.append(word) }
+        if let word = pendingWord, !word.text.isEmpty {
+            if pendingIsBackground { lineBackground.append(word) } else { lineWords.append(word) }
+        }
         pendingWord = nil
     }
 

@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>CFBundleName</key>
-    <string>LyricAura</string>
+    <string>Auraverse</string>
     <key>CFBundleIdentifier</key>
-    <string>com.ayaansajjad.LyricAura</string>
+    <string>com.ayaansajjad.Auraverse</string>
     <key>CFBundleExecutable</key>
-    <string>LyricAura</string>
+    <string>Auraverse</string>
     <key>CFBundlePackageType</key>
     <string>APPL</string>
     <key>CFBundleShortVersionString</key>
@@ -17,6 +17,6 @@
     <key>LSMinimumSystemVersion</key>
     <string>15.0</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>LyricAura reads the current song and playback position from Apple Music to show synced lyrics.</string>
+    <string>Auraverse reads the current song and playback position from Apple Music to show synced lyrics.</string>
 </dict>
 </plist>

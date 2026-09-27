@@ -2,7 +2,7 @@ import SwiftUI
 
 /// User-selectable looks. Effects are Metal shaders in Shaders/Shaders.metal.
 enum LyricStyle: String, CaseIterable, Identifiable {
-    case classic, fisheye, vhs, liquid
+    case classic, fisheye, vhs, liquid, led, lcd
 
     var id: Self { self }
 
@@ -12,12 +12,17 @@ enum LyricStyle: String, CaseIterable, Identifiable {
         case .fisheye: "Fisheye"
         case .vhs: "VHS"
         case .liquid: "Liquid"
+        case .led: "LED Sign"
+        case .lcd: "LCD Screen"
         }
     }
+
+    /// Dot-display styles (see `DotDisplay`): they draw their own opaque screen (no album background) and have no emojis.
+    var isSign: Bool { self == .led || self == .lcd }
 }
 
 extension View {
-    /// Distortion applied to the lyrics (and emojis).
+    /// Effect applied to the lyric column (and emojis).
     func lyricEffect(_ style: LyricStyle, time: Float) -> some View {
         visualEffect { content, proxy in
             content
@@ -38,6 +43,12 @@ extension View {
                                 maxSampleOffset: CGSize(width: 40, height: 0), isEnabled: style == .vhs)
         }
     }
+}
+
+/// Classic green backlit LCD.
+enum LCDColors {
+    static let ink = Color(red: 0.1, green: 0.14, blue: 0.08)
+    static let backlight = Color(red: 0.64, green: 0.72, blue: 0.52)
 }
 
 // MARK: - Background
