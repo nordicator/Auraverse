@@ -31,7 +31,8 @@ struct DotDisplay: View, Equatable {
             // Meters stop short of the title and the settings button at the top.
             let meterHeight = Float(max(Int((geo.size.height / 2 - 44) / cell), 1))
 
-            TimelineView(.animation(minimumInterval: 1.0 / 60, paused: !clock.playing)) { context in
+            // 30fps: plenty for dots, and the meters make this redraw the whole window whenever a bar moves.
+            TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !clock.playing)) { context in
                 let bands = clock.playing && reaction > 0
                     ? pointwiseMin(MusicAudio.shared.levels.bands * Float(reaction), .one) : .zero
                 DotBoard(words: words(at: clock.time(at: context.date)),

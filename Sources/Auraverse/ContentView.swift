@@ -4,6 +4,7 @@ import SwiftUI
 // - Background: its own 30fps clock, paused when music is paused.
 // - Lyrics column: re-rendered only when a new line starts (explicit schedule of line start times).
 // - The line being sung: its own 60fps clock, so only a few words update per frame.
+// - Everything freezes while the window is hidden (`MusicWatcher.clock` stops), and the audio tap stops too.
 // - Emojis: a 60fps clock that only runs while an emoji is on screen.
 // - VHS / Liquid: a 30fps clock for the shader; the other styles have no clock at all.
 struct ContentView: View {
@@ -294,6 +295,8 @@ struct ChunkView: View {
 }
 
 /// A single word that fills in karaoke-style, left to right, while it's being sung.
+/// Keep every word drawn the same way whatever its state (plain text + masked copy). Switching words between
+/// plain and gradient-filled text as they were sung made them hop up and down.
 struct WordView: View {
     let word: LyricWord
     let time: Double

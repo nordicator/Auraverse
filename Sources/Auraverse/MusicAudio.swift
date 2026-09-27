@@ -86,6 +86,10 @@ final class MusicAudio: @unchecked Sendable {
                                                kAudioSubTapUIDKey: description.uuid.uuidString]],
         ]
         guard AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &deviceID) == noErr else { return teardown() }
+        // Big buffers: ~23 wake-ups a second at 48kHz instead of ~94. Latency doesn't matter for visuals this coarse.
+        var frames: UInt32 = 2048
+        var address = Self.address(kAudioDevicePropertyBufferFrameSize)
+        AudioObjectSetPropertyData(deviceID, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &frames)
 
         let interleaved = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved == 0
         let channels = Int(max(format.mChannelsPerFrame, 1))
@@ -198,6 +202,11 @@ struct SpectrumAnalyzer {
     private let hopSeconds: Float
 
     private var pending: [Float] = []
+    // Scratch space, reused so the audio thread doesn't allocate.
+    private var windowed = [Float](repeating: 0, count: size)
+    private var real = [Float](repeating: 0, count: size / 2)
+    private var imag = [Float](repeating: 0, count: size / 2)
+    private var power = [Float](repeating: 0, count: size / 2)
     private var peaks = SIMD4<Float>(repeating: 0)
     private var bassAverage: Float = 0
     private(set) var levels = AudioLevels()
@@ -233,10 +242,7 @@ struct SpectrumAnalyzer {
     }
 
     private mutating func analyze(_ frame: ArraySlice<Float>) {
-        let windowed = vDSP.multiply(frame, window)
-        var real = [Float](repeating: 0, count: Self.size / 2)
-        var imag = [Float](repeating: 0, count: Self.size / 2)
-        var power = [Float](repeating: 0, count: Self.size / 2)
+        vDSP.multiply(frame, window, result: &windowed)
         real.withUnsafeMutableBufferPointer { r in
             imag.withUnsafeMutableBufferPointer { i in
                 var split = DSPSplitComplex(realp: r.baseAddress!, imagp: i.baseAddress!)

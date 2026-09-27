@@ -24,7 +24,13 @@ struct PlaybackClock: Equatable {
 @MainActor
 final class MusicWatcher: ObservableObject {
     @Published private(set) var track: Track?
+    /// What the views animate from. Same as `playback`, except frozen (not playing) while the app is hidden,
+    /// which pauses every clock in the window.
     @Published private(set) var clock = PlaybackClock()
+    /// Where Music actually is.
+    private var playback = PlaybackClock() { didSet { refreshClock() } }
+    /// False while no part of the app's windows is on screen (minimized, covered, on another Space).
+    private var visible = true { didSet { refreshClock() } }
     @Published private(set) var lines: [TimedLine] = []
     /// Bumped whenever `lyrics` is replaced, so views can compare lyrics cheaply.
     @Published private(set) var lyricsID = 0
@@ -42,6 +48,7 @@ final class MusicWatcher: ObservableObject {
     private var pollAgain = false
     private var timer: Timer?
     private var observer: NSObjectProtocol?
+    private var occlusionObserver: NSObjectProtocol?
 
     init() {
         poll()
@@ -50,6 +57,12 @@ final class MusicWatcher: ObservableObject {
             forName: Notification.Name("com.apple.Music.playerInfo"), object: nil, queue: .main
         ) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
+        }
+        // Stop animating (and listening) while nobody can see the window: it's what keeps the laptop cool in the background.
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeOcclusionStateNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.visible = NSApp.occlusionState.contains(.visible) }
         }
         // ...and only poll now and then to catch seeks (which it doesn't announce) and drift.
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
@@ -77,25 +90,31 @@ final class MusicWatcher: ObservableObject {
                 artwork = nil
                 setLyrics([], source: nil)
             }
-            if clock.playing { clock.playing = false }
-            MusicAudio.shared.update(playing: false)
+            if playback.playing { playback.playing = false }
             status = result == .failed ? "Can't reach Apple Music (check Automation permission)" : "Nothing playing in Apple Music"
             return
         }
 
         // Only re-anchor when we've drifted, so small AppleScript latency doesn't make the lyrics jitter
         // (and so views depending on the clock aren't invalidated on every poll).
-        if playing != clock.playing || abs(clock.time(at: date) - position) > 0.3 || newTrack != track {
-            clock = PlaybackClock(position: position, date: date, playing: playing)
+        if playing != playback.playing || abs(playback.time(at: date) - position) > 0.3 || newTrack != track {
+            playback = PlaybackClock(position: position, date: date, playing: playing)
         }
-
-        MusicAudio.shared.update(playing: playing && SettingsKey.musicReaction > 0) // off = don't listen at all
+        MusicAudio.shared.update(playing: clock.playing && SettingsKey.musicReaction > 0) // off = don't listen at all
 
         if newTrack != track {
             track = newTrack
             loadLyrics(for: newTrack)
             loadArtwork(for: newTrack)
         }
+    }
+
+    private func refreshClock() {
+        let shown = visible ? playback
+            : PlaybackClock(position: playback.time(at: Date()), date: Date(), playing: false)
+        guard shown != clock else { return }
+        clock = shown
+        MusicAudio.shared.update(playing: clock.playing && SettingsKey.musicReaction > 0)
     }
 
     private func loadLyrics(for track: Track) {

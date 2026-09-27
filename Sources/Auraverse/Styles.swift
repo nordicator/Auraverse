@@ -25,11 +25,15 @@ extension View {
     /// Effect applied to the lyric column (and emojis).
     func lyricEffect(_ style: LyricStyle, time: Float) -> some View {
         visualEffect { content, proxy in
-            content
-                // The lens pulls pixels in from up to about half the view away, so say so,
-                // otherwise SwiftUI doesn't give the shader enough of the layer to sample.
-                .distortionEffect(ShaderLibrary.fisheye(.float2(proxy.size), .float(0.55)),
-                                  maxSampleOffset: CGSize(width: proxy.size.width / 2, height: proxy.size.height / 2),
+            // How far the lens moves any pixel: `fisheye` samples from radius f(r) = r - strength * (r - 1 + sqrt(1 - r²))
+            // (in units of the half-diagonal), and r - f(r) peaks at r = 1/√2 with strength * (√2 - 1).
+            // SwiftUI renders the view padded by this much on every side each frame, so it's kept exact
+            // (+1pt): overstating it (it used to be half the window) meant rendering ~4x the pixels and dropping frames.
+            let lens: Float = 0.55
+            let reach = Double(lens) * (2.0.squareRoot() - 1) * hypot(proxy.size.width, proxy.size.height) / 2 + 1
+            return content
+                .distortionEffect(ShaderLibrary.fisheye(.float2(proxy.size), .float(lens)),
+                                  maxSampleOffset: CGSize(width: reach, height: reach),
                                   isEnabled: style == .fisheye)
                 .distortionEffect(ShaderLibrary.wave(.float(time), .float(6)),
                                   maxSampleOffset: CGSize(width: 6, height: 6), isEnabled: style == .liquid)
